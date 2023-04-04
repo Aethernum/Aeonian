@@ -1,22 +1,21 @@
-﻿using System.Collections.Generic;
 using TriangleNet.Geometry;
 using TriangleNet.Topology;
+using System.Collections.Generic;
 using UnityEngine;
 
-public class DelaunayTerrain : MonoBehaviour
+public class IslandManager : MonoBehaviour
 {
     // Maximum size of the terrain.
     public int SideSize = 50;
-
     // Minimum distance the poisson-disc-sampled points are from each other.
     public float minPointRadius = 4.0f;
-
     // Number of random points to generate.
     public int randomPoints = 100;
+    // Elevations at each point in the mesh
+    private List<float> elevations;
 
     // Triangles in each chunk.
     public int trianglesInChunk = 20000;
-
     // Perlin noise parameters
     public float elevationScale = 100.0f;
     public float sampleSize = 1.0f;
@@ -24,46 +23,26 @@ public class DelaunayTerrain : MonoBehaviour
     public float frequencyBase = 2;
     public float persistence = 1.1f;
 
-    // World Seed
-    public int worldSeed = 0;
-
     // Detail mesh parameters
     public Transform detailMesh;
     public int detailMeshesToGenerate = 50;
 
-    // Prefab which is generated for each chunk of the mesh.
-    public Transform chunkPrefab = null;
-
-    // Elevations at each point in the mesh
-    private List<float> elevations;
-
+    // List of points on the boundary of island
     private List<Vector2> boundaryPoints;
     // Fast triangle querier for arbitrary points
     private TriangleBin bin;
     // The delaunay mesh
     private TriangleNet.Mesh mesh = null;
 
-    private Dictionary<Vector2, Transform> generatedIslands = new Dictionary<Vector2, Transform>();
-    public Transform player;
-
     private void Start()
     {
-        InitializeRandomSeed();
-        GenerateIsland(new Vector3(player.position.x, 0, player.position.z));
+        CreationOfIsland(this.transform.position);
     }
-
-    public void GenerateIsland(Vector3 position)
+    public void CreationOfIsland(Vector3 position)
     {
-        InitializeRandomSeed(); // Ajoutez cette ligne pour initialiser la graine
         boundaryPoints = GetBoundaryPoints();
-        GenerateTerrain(position);
+        GenerateAllPoint();
     }
-
-    private void InitializeRandomSeed()
-    {
-        UnityEngine.Random.InitState(worldSeed);
-    }
-
     protected List<Vector2> GetBoundaryPoints()
     {
         var points = new List<Vector2>();
@@ -74,32 +53,7 @@ public class DelaunayTerrain : MonoBehaviour
 
         return points;
     }
-
-    public static bool IsPointInPolygon(List<Vector2> polygon, Vector2 point)
-    {
-        int polygonLength = polygon.Count, i = 0;
-        bool inside = false;
-        // x, y for tested point.
-        float pointX = point.x, pointY = point.y;
-        // start / end point for the current polygon segment.
-        float startX, startY, endX, endY;
-        Vector2 endPoint = polygon[polygonLength - 1];
-        endX = endPoint.x;
-        endY = endPoint.y;
-        while (i < polygonLength)
-        {
-            startX = endX; startY = endY;
-            endPoint = polygon[i++];
-            endX = endPoint.x; endY = endPoint.y;
-            //
-            inside ^= (endY > pointY ^ startY > pointY) /* ? pointY inside [startY;endY] segment ? */
-                      && /* if so, test if it is under the segment */
-                      ((pointX - endX) < (pointY - endY) * (startX - endX) / (startY - endY));
-        }
-        return inside;
-    }
-
-    public void GenerateTerrain(Vector3 position)
+    public void GenerateAllPoint()
     {
         elevations = new List<float>();
 
@@ -156,10 +110,32 @@ public class DelaunayTerrain : MonoBehaviour
             elevations.Add(elevation * elevationScale);
         }
 
-        MakeMesh(position);
+        MakeMesh();
     }
-
-    public void MakeMesh(Vector3 position)
+    private static bool IsPointInPolygon(List<Vector2> polygon, Vector2 point)
+    {
+        int polygonLength = polygon.Count, i = 0;
+        bool inside = false;
+        // x, y for tested point.
+        float pointX = point.x, pointY = point.y;
+        // start / end point for the current polygon segment.
+        float startX, startY, endX, endY;
+        Vector2 endPoint = polygon[polygonLength - 1];
+        endX = endPoint.x;
+        endY = endPoint.y;
+        while (i < polygonLength)
+        {
+            startX = endX; startY = endY;
+            endPoint = polygon[i++];
+            endX = endPoint.x; endY = endPoint.y;
+            //
+            inside ^= (endY > pointY ^ startY > pointY) /* ? pointY inside [startY;endY] segment ? */
+                      && /* if so, test if it is under the segment */
+                      ((pointX - endX) < (pointY - endY) * (startX - endX) / (startY - endY));
+        }
+        return inside;
+    }
+    private void MakeMesh()
     {
         IEnumerator<Triangle> triangleEnumerator = mesh.Triangles.GetEnumerator();
 
@@ -208,38 +184,44 @@ public class DelaunayTerrain : MonoBehaviour
             chunkMesh.triangles = triangles.ToArray();
             chunkMesh.normals = normals.ToArray();
 
-            Transform terrain = Instantiate<Transform>(chunkPrefab, position, Quaternion.identity);
-            terrain.GetComponent<MeshFilter>().mesh = chunkMesh;
-            terrain.GetComponent<MeshCollider>().sharedMesh = chunkMesh;
-            terrain.transform.parent = transform;
+           
+
+            GetComponent<MeshFilter>().mesh = chunkMesh;
+            GetComponent<MeshCollider>().sharedMesh = chunkMesh;
+            
+
+            ScatterDetailMeshes();
         }
     }
-
-    /* Returns a point's local coordinates. */
-
     public Vector3 GetPoint3D(int index)
     {
         Vertex vertex = mesh.vertices[index];
         float elevation = elevations[index];
         return new Vector3((float)vertex.x - SideSize / 2.0f, elevation, (float)vertex.y - SideSize / 2.0f);
     }
-
-    /* Returns the triangle containing the given point. If no triangle was found, then null is returned.
-       The list will contain exactly three point indices. */
-
-    public List<int> GetTriangleContainingPoint(Vector2 point)
+    private void ScatterDetailMeshes()
     {
-        Triangle triangle = bin.getTriangleForPoint(new Point(point.x, point.y));
-        if (triangle == null)
+        for (int i = 0; i < detailMeshesToGenerate; i++)
         {
-            return null;
+            // Obtain a random position
+            float x = Random.Range(0, SideSize);
+            float z = Random.Range(0, SideSize);
+            float elevation = GetElevation(x, z);
+            Vector3 position = new Vector3(x, elevation, z);
+
+            if (elevation == float.MinValue)
+            {
+                // Value returned when we couldn't find a triangle, just skip this one
+                continue;
+            }
+
+            // We always want the mesh to remain upright, so only vary the rotation in the x-z plane
+            float angle = Random.Range(0, 360.0f);
+            Quaternion randomRotation = Quaternion.AngleAxis(angle, Vector3.up);
+
+            Instantiate<Transform>(detailMesh, position, randomRotation, transform);
         }
-
-        return new List<int>(new int[] { triangle.vertices[0].id, triangle.vertices[1].id, triangle.vertices[2].id });
     }
-
-    /* Returns a pretty good approximation of the height at a given point in worldspace */
-
     public float GetElevation(float x, float y)
     {
         x += SideSize / 2.0f;
@@ -270,46 +252,17 @@ public class DelaunayTerrain : MonoBehaviour
 
         return elevation;
     }
+    /* Returns the triangle containing the given point. If no triangle was found, then null is returned.
+   The list will contain exactly three point indices. */
 
-    /* Scatters detail meshes within the bounds of the terrain. */
-
-    public void ScatterDetailMeshes(Vector3 islandPosition)
+    public List<int> GetTriangleContainingPoint(Vector2 point)
     {
-        for (int i = 0; i < detailMeshesToGenerate; i++)
+        Triangle triangle = bin.getTriangleForPoint(new Point(point.x, point.y));
+        if (triangle == null)
         {
-            // Obtain a random position
-            float x = Random.Range(0, SideSize);
-            float z = Random.Range(0, SideSize);
-            float elevation = GetElevation(x, z);
-            Vector3 position = islandPosition + new Vector3(x, elevation, z);
-
-            if (elevation == float.MinValue)
-            {
-                // Value returned when we couldn't find a triangle, just skip this one
-                continue;
-            }
-
-            // We always want the mesh to remain upright, so only vary the rotation in the x-z plane
-            float angle = Random.Range(0, 360.0f);
-            Quaternion randomRotation = Quaternion.AngleAxis(angle, Vector3.up);
-
-            Instantiate<Transform>(detailMesh, position, randomRotation, this.transform);
-        }
-    }
-
-    public void OnDrawGizmos()
-    {
-        if (mesh == null)
-        {
-            // Probably in the editor
-            return;
+            return null;
         }
 
-        Gizmos.color = Color.red;
-        /*for (int i = 0; ++i < boundaryPoints.Count; ++i)
-        {
-            Debug.Log("itération");
-            Gizmos.DrawSphere(new Vector3(boundaryPoints[i].x, 0, boundaryPoints[i].y), 10f);
-        }*/
+        return new List<int>(new int[] { triangle.vertices[0].id, triangle.vertices[1].id, triangle.vertices[2].id });
     }
 }
