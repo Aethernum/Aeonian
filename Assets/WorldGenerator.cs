@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class WorldGenerator : MonoBehaviour
 {
-    public IslandManager islandManagerPrefab;
+    public MeshGeneratorV2 islandManagerPrefab;
     public int numberOfIslands;
 
     // World Seed
@@ -22,10 +22,10 @@ public class WorldGenerator : MonoBehaviour
 
     private void GenerateWorld()
     {
-        // Générer une position aléatoire pour l'île
+        // Gï¿½nï¿½rer une position alï¿½atoire pour l'ï¿½le
         Vector3 islandPosition = new Vector3(0, 0, 0);
 
-        // Instancier un nouvel IslandManager pour gérer la génération de l'île
-        IslandManager newIslandManager = Instantiate(islandManagerPrefab, islandPosition, Quaternion.identity);
+        // Instancier un nouvel IslandManager pour gï¿½rer la gï¿½nï¿½ration de l'ï¿½le
+        MeshGeneratorV2 newIslandManager = Instantiate(islandManagerPrefab, islandPosition, Quaternion.identity);
     }
 }
