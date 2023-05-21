@@ -9,7 +9,11 @@ using Random = UnityEngine.Random;
 public class MeshGeneratorV3 : MonoBehaviour
 {
     private Mesh mesh;
-    private int MESH_SCALE = 100;
+    private int MESH_SCALE = 2;
+    // Ajoutez cette liste pour stocker vos objets inactifs
+    private List<GameObject> pooledObjects;
+    private int poolSize = 250; // Taille de votre pool d'objets
+
     public GameObject[] objects;
     [SerializeField] private AnimationCurve heightCurve;
     private List<Vector3> vertices;
@@ -33,14 +37,32 @@ public class MeshGeneratorV3 : MonoBehaviour
     private float lastNoiseHeight;
 
     private List<Vector2> boundaryPoints;
+    private MeshCollider meshCollider;
 
     private void Start()
     {
-        // Use this method if you havn't filled out the properties in the inspector
-        // SetNullProperties();
+        SetNullProperties();
+        // Initialisez votre pool d'objets
+        pooledObjects = new List<GameObject>(poolSize);
+        // Modified code with null check
+        for (int i = 0; i < poolSize; i++)
+        {
+            if (objects != null && objects.Length > 0)
+            {
+                GameObject obj = Instantiate(objects[Random.Range(0, objects.Length)], new Vector3(0, 0, 0), Quaternion.identity);
+                obj.transform.parent = GameObject.Find("AllElement").transform;
+                obj.SetActive(false);
+                pooledObjects.Add(obj);
+            }
+            else
+            {
+                break;
+            }
+        }
 
         mesh = new Mesh();
         GetComponent<MeshFilter>().sharedMesh = mesh;
+        meshCollider = GetComponent<MeshCollider>();
         CreateNewMap();
     }
 
@@ -55,7 +77,7 @@ public class MeshGeneratorV3 : MonoBehaviour
 
     public void CreateNewMap()
     {
-        boundaryPoints = GetBoundaryPoints();
+        boundaryPoints = MakeCircleShape();
 
         CreateMeshShape();
         CreateTriangles();
@@ -63,12 +85,12 @@ public class MeshGeneratorV3 : MonoBehaviour
         UpdateMesh();
     }
 
-    protected List<Vector2> GetBoundaryPoints()
+    protected List<Vector2> MakeCircleShape()
     {
         var points = new List<Vector2>();
         for (float i = 0; i < Mathf.PI * 2; i += Mathf.PI * 2 / 50)
         {
-            points.Add(new Vector2(xSize / 2 + Mathf.Cos(i) * (xSize / 2 + 0.001f), zSize / 2 + Mathf.Sin(i) * (zSize / 2 + 0.001f)));
+            points.Add(new Vector2(Mathf.Cos(i) * (xSize / 2 + 0.001f), Mathf.Sin(i) * (zSize / 2 + 0.001f)));
         }
 
         return points;
@@ -111,12 +133,12 @@ public class MeshGeneratorV3 : MonoBehaviour
         {
             for (int x = 0; x <= xSize; x++)
             {
-                if (IsPointInPolygon(boundaryPoints, new Vector2(x, z)))
+                if (IsPointInPolygon(boundaryPoints, new Vector2(x - xSize / 2, z - zSize / 2)))
                 {
                     // Set height of vertices
                     float noiseHeight = GenerateNoiseHeight(z, x, octaveOffsets);
                     SetMinMaxHeights(noiseHeight);
-                    vertices.Add(new Vector3(x, noiseHeight, z));
+                    vertices.Add(new Vector3(x - xSize / 2, noiseHeight, z - zSize / 2));
                 }
             }
         }
@@ -184,6 +206,7 @@ public class MeshGeneratorV3 : MonoBehaviour
             }
             // Create a new mesh.
             var quality = new QualityOptions() { MinimumAngle = 25.0 };
+            var option = new ConstraintOptions() { ConformingDelaunay = true };
             var mesh = (TriangleNet.Mesh)geometry.Triangulate();
             // Use a Dictionary to map vertices to their indices.
             Dictionary<Vertex, int> vertexIndices = new Dictionary<Vertex, int>();
@@ -226,28 +249,48 @@ public class MeshGeneratorV3 : MonoBehaviour
 
     private void MapEmbellishments()
     {
-        for (int i = 0; i < vertices.Count; i++)
+        int currentPoolIndex = 0;
+
+        for (int i = 0; i < vertices.Count; i += 10)
         {
-            // find actual position of vertices in the game
+            // Trouvez la position réelle des sommets dans le jeu
             Vector3 worldPt = transform.TransformPoint(mesh.vertices[i]);
             var noiseHeight = worldPt.y;
-            // Stop generation if height difference between 2 vertices is too steep
-            if (System.Math.Abs(lastNoiseHeight - worldPt.y) < 25)
+            // Arrêtez la génération si la différence de hauteur entre 2 sommets est trop raide
+            if (Math.Abs(lastNoiseHeight - noiseHeight) < 25)
             {
-                // min height for object generation
-                if (noiseHeight > 100)
+                // Hauteur minimale pour la génération d'objets
+                if (noiseHeight > 0)
                 {
-                    // Chance to generate
-                    if (Random.Range(1, 5) == 1)
+                    // Chance de générer
+                    if (Random.Range(1, 6) == 1)  // Correction de la probabilité de génération
                     {
-                        GameObject objectToSpawn = objects[Random.Range(0, objects.Length)];
-                        var spawnAboveTerrainBy = noiseHeight * 2;
-                        Instantiate(objectToSpawn, new Vector3(0, 0, 0), Quaternion.identity);
+                        GameObject objectToSpawn = GetPooledObject();
+                        if (objectToSpawn != null)
+                        {
+                            objectToSpawn.transform.position = new Vector3(worldPt.x, noiseHeight - 0.5f, worldPt.z); // Mettez à jour la position
+                            objectToSpawn.transform.SetParent(transform); // Ajoutez cette ligne pour définir le parent
+                            objectToSpawn.SetActive(true);
+                        }
+                        currentPoolIndex = (currentPoolIndex + 1) % poolSize; // Faites boucler l'indice de la pool
                     }
                 }
             }
             lastNoiseHeight = noiseHeight;
         }
+    }
+
+    private GameObject GetPooledObject()
+    {
+        for (int i = 0; i < pooledObjects.Count; i++)
+        {
+            if (!pooledObjects[i].activeInHierarchy)
+            {
+                return pooledObjects[i];
+            }
+        }
+        Debug.Log("all use");
+        return null; // si tous les objets sont actifs, renvoie null
     }
 
     private void UpdateMesh()
@@ -259,8 +302,12 @@ public class MeshGeneratorV3 : MonoBehaviour
         mesh.RecalculateNormals();
         mesh.RecalculateTangents();
 
-        //GetComponent<MeshCollider>().sharedMesh = mesh;
-        //gameObject.transform.localScale = new Vector3(MESH_SCALE, MESH_SCALE, MESH_SCALE);
+        if (meshCollider != null) // Vérifiez si meshCollider n'est pas null avant de l'utiliser
+        {
+            meshCollider.sharedMesh = mesh;
+        }
+
+        gameObject.transform.localScale = new Vector3(MESH_SCALE, MESH_SCALE, MESH_SCALE);
 
         MapEmbellishments();
     }
